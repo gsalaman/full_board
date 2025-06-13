@@ -8,7 +8,7 @@
  ====================================================*/
 #include "Servo.h"
 
-#define SERVOPIN 7
+#define SERVOPIN 13
 
 Servo myServo;
 
