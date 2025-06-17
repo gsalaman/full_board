@@ -1,6 +1,11 @@
-/*  full_board.ino
+/*=============================================================================  
+ * full_board.ino
  *   
- *   This sketch shows an Uno doing continuous servo, playing a song, and lighting up LEDS, all at the same time.
+ * This sketch showcases 3 activities going on simultaneously on an Uno: 
+ *    - continuous servo, controled by a poteniometer
+ *    - playing a song on a speaker, controlled by a button
+ *    - driving an RGB LED pattern.
+ *    
  */
 
 /*====================================================
@@ -8,7 +13,7 @@
  ====================================================*/
 #include "Servo.h"
 
-#define SERVOPIN 13
+#define SERVOPIN 13 
 
 Servo myServo;
 
@@ -24,7 +29,7 @@ servo_dir_type servo_dir=SERVO_STOP;
 #define SERVO_DIAL_PIN A0
 
 /*====================================================
- *music defines 
+ * music defines 
  ====================================================*/
 
 #define SONG_BUTTON_PIN 4
@@ -35,9 +40,7 @@ uint32_t song_start_ms;
 uint32_t song_next_note_ms;
 int      song_current_note_index;
 
-/*==============================================
- * Note Defines
- *=============================================*/
+/* This section of #defines sets the frequency for each note in Hz*/
 #define NOTE_REST 0
 #define NOTE_D3  147
 #define NOTE_C4  262
@@ -67,19 +70,25 @@ int      song_current_note_index;
 #define NOTE_C6  1046
 #define NOTE_Db6 1109
 
+/* To define a song, we need a collection of notes.  
+ * Each note has a frequency (from the #defines above) and a duration
+ */
 typedef struct
 {
   int freq; 
   int duration_ms;
 } note_type;
 
+/* This structure will then hold the array of notes to make a song. 
+ * By specifying the number of notes in the song we're able have that song on "repeat" 
+ */
 typedef struct
 {
   note_type *notes;
   int        num_notes;
 } song_type;
 
-/* the songs themselves */
+/* Here are the array definitions for the songs themselves */
 note_type scale[]=
 {
   {NOTE_C5, 1000},
@@ -194,6 +203,7 @@ note_type just_beep[] =
   {NOTE_REST, 300}
 };
 
+/* We now use the above-defined song_type to put the song and number of notes in that song */
 song_type groove_song={groove, sizeof(groove)/sizeof(note_type)};
 song_type temple_song={temple, sizeof(temple)/sizeof(note_type)};
 song_type scale_song={scale, 8};
@@ -201,6 +211,7 @@ song_type just_beep_song={just_beep, sizeof(just_beep)/sizeof(note_type)};
 song_type jaws_song={jaws, sizeof(jaws)/sizeof(note_type)};
 song_type alarm_song;
 
+/* this array is a collection of all the songs we want to play */
 song_type all_songs[]=
 {
   groove_song,
@@ -212,9 +223,14 @@ song_type all_songs[]=
 
 int num_songs = sizeof(all_songs)/sizeof(song_type);
 
+/* These varibles alow us to loop over the songs in the "all_songs" array. */
 int current_song_index = 0;
 song_type song = groove_song;
 
+/* We're debouncing the "song press" button to remove spurious toggles.
+ *  That button needs to be held down for SONG_PRESS_BUTTON_TIME milliseconds and then released
+ *  before we detect it as an actual button press.
+ */
 uint32_t song_button_press_ms = 0;
 int      last_song_button_state = 1;
 #define SONG_BUTTON_PRESS_TIME 500
@@ -230,26 +246,44 @@ int      last_song_button_state = 1;
 #define BRIGHTNESS 100
 #define NUM_LEDS 28
 
+/* CRGB is a type used by the FastLED library.  It lets us set color for each LED individualy.
+ *  The leds array keeps track of what color is on each pixel of our LED collection.
+ */
 CRGB leds[NUM_LEDS];
 
-
+/* We're going to be doing a moving pattern, so we want to keep track of time.  
+ *  This allows us to control the speed of our LED pattern without using the 
+ *  arduino's "delay" functions....as using delay would interfere with playing the song.
+ */
 uint32_t last_pixel_update_ms = 0;
 #define PIXEL_UPDATE_RATE_MS 100
 
+/* in the current implementation, we have two rings of LEDs connected to the LED pin:
+ *  First, a "big ring" with 16 pixels, then a "small ring" with 12 pixels. 
+ *  Inside of the leds array, indexes 0 through 15 will reference the "big ring" pixels,
+ *  and 16 through 27 will reference the "small ring" pixels.
+ */
 #define BIG_RING_START 0
 #define BIG_RING_SIZE 16
 #define SMALL_RING_START 16
 #define SMALL_RING_SIZE 12
 
+/* our pattern is going to be two circling red pixels on a blue background.  We use these
+ *  variables to determine the current position of the red LED
+ */
 int big_ring_red_pos = BIG_RING_START;
 int small_ring_red_pos = SMALL_RING_START;
 
 
-
-
-
 /*=================================
  * MUSIC FUNCTIONS
+ ===================================*/
+
+/*=================================
+ * start_song
+ * 
+ * This function starts playing the current song (referenced by the "song" global variable
+ * by playing the first note and storing when the next note needs to be played.
  ===================================*/
 void start_song( void )
 {
@@ -279,6 +313,14 @@ void start_song( void )
   else song_current_note_index = 1;
 }
 
+/*=================================
+ * stop_song
+ * 
+ * This function stops playing the current song (referenced by the "song" global variable
+ * by turning off the speaker. 
+ * 
+ * In addition, we "queue up" the next song by modifing the "song" global variable.
+ ===================================*/
 void stop_song( void )
 {
   noTone(SPEAKER_PIN);
@@ -293,6 +335,14 @@ void stop_song( void )
   song = all_songs[current_song_index];
 }
 
+/*=================================
+ * play_song
+ * 
+ * This function does the heavy lifting of playing the current song.
+ * 
+ * If it's time for a note to be played, it does so, and then marks the time
+ * that the next note needs to be played.
+ ===================================*/
 void play_song( void )
 {
   uint32_t current_time;
@@ -323,6 +373,16 @@ void play_song( void )
   }
 }
 
+/*=================================
+ * check_for_song_toggle
+ * 
+ * This function debounces the SONG_BUTTON_PIN by keeping track of the button state, and,
+ * if the button is pressed, at what time was that button pressed.  
+ * 
+ * When the button is released, we check to see how long it was pressed for.  If it was 
+ * long enough, we'll either start the current song (if no song was playing) or 
+ * stop the current song (if a song is currently playing).
+ ===================================*/
 void check_for_song_toggle(void)
 {
   int current_song_button_state;
@@ -371,40 +431,54 @@ void check_for_song_toggle(void)
 }
 
 /*======================================================
- * Servo functions
- =======================================================*/
+* SERVO FUNCITONS
+=======================================================*/
+
+/*=================================
+ * check_for_servo_dir_change
+ * 
+ * We're using a poteniometer attached to the SERVO_DIAL_PIN to control our 
+ * continuous servo.  Depending on how that poteniometer is turned, we'll either rotate
+ * it forward or backwards, or stop it if the dial is in the middle.
+ ===================================*/
 void check_for_servo_dir_change( void )
 {
   int read_val;
 
+  /* This read will return a value of 0-1023, depending on the value of the poteniometer. */
   read_val = analogRead(SERVO_DIAL_PIN);
 
   /* Map that dial value to one of three states */
   if (read_val > 600)
   {
-
-    
+    /* Values bigger than 600 correspond to "forward" direction.  
+     * If we weren't already moving forward, start the servo moving forward.
+     */
     if (servo_dir != SERVO_FWD)
     {
       Serial.println("Starting Servo Forward");
       servo_dir = SERVO_FWD;
       myServo.attach(SERVOPIN);
-      myServo.write(0);
+      myServo.write(0);   // With a continuous servo, values of 0 correspond to full speed 
+                          // in one direction.
     }
   }
   else if (read_val < 300)
   {
+    /* Values bigger than 600 correspond to "forward" direction.  
+     * If we weren't already moving forward, start the servo moving forward.
+     */
     if (servo_dir != SERVO_BACK)
     {
       Serial.println("Starting Servo Backwards");
       servo_dir = SERVO_BACK;
       myServo.attach(SERVOPIN);
-      myServo.write(180);
+      myServo.write(180);  // Servo values of 180 correspond to full speed in the other direction.
     }
   }
   else
   {
-    /* this is in the middle.  Stop the servo */
+    /* If the potentiometer is in the middle, stop the servo */
     if (servo_dir != SERVO_STOP)
     {
       Serial.println("Stopping Servo");
@@ -416,9 +490,19 @@ void check_for_servo_dir_change( void )
 }
 
 /*=====================================
- * LED Functions
+ * LED FUNCTIONS
  ======================================*/
 
+/*=================================
+ * rotate_rings
+ * 
+ * We've got two RGB rings in our project...a large one with 16 pixels, and a smaller one
+ * with 12 pixels.
+ * 
+ * This function causes both rings to be mostly blue, with one red LED that chases around
+ * each ring.  Since the rings map to different places in the "leds" array, we need to do 
+ * some math to figure out where in the ring we need to update.
+ ===================================*/
 void rotate_rings(void)
 {
   uint32_t current_ms;
@@ -432,6 +516,7 @@ void rotate_rings(void)
     /* Update the big ring */
     for (i = BIG_RING_START; i < BIG_RING_SIZE; i++)
     {
+      /* Mark the current index (big_ring_red_pos) as red, and the others in the big ring blue */
       if (i == big_ring_red_pos)
       {
         leds[i] = CRGB::Red;
@@ -441,6 +526,9 @@ void rotate_rings(void)
         leds[i] = CRGB::Blue;
       }
     }
+    /* and then move our "red" position one around, dealing with the fact that when we get to the 
+     *  end of the ring, we need to go back to zero (the start of the ring).
+     */
     big_ring_red_pos++;
     if (big_ring_red_pos == BIG_RING_SIZE)
     {
@@ -449,12 +537,15 @@ void rotate_rings(void)
 
     /* Update the small ring */
 
+    /* inside of the "leds" array, the small rings positions are 16 through 27.  */
     for (i = SMALL_RING_START; i < (SMALL_RING_START + SMALL_RING_SIZE); i++)
     {
+      /* Same thing going on here as with the big ring.  Set one pixel of the small ring to 
+       *  red, and the rest blue
+       */
       if (i == small_ring_red_pos)
       {
         leds[i] = CRGB::Red;
-
       }
       else
       {
@@ -462,12 +553,16 @@ void rotate_rings(void)
 
       }
     }
+    /* ...and advance where that red pixel will be next time...wrapping it around now
+     *  to the index marking the start of the small ring (16)
+     */
     small_ring_red_pos++;
     if (small_ring_red_pos == (SMALL_RING_SIZE + SMALL_RING_START) )
     {
       small_ring_red_pos = SMALL_RING_START;
     }
-    
+
+    /* Now that we've got the leds array set, FastLED.show() actually displays those pixels */
     FastLED.show();
     last_pixel_update_ms = current_ms;
   }
